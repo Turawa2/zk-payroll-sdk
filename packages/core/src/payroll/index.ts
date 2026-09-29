@@ -19,3 +19,4 @@ export * from "./paymentInstructionExpiry";
 export * from "./periodOwnershipReader";
 export * from "./payrollSubmissionSequenceValidator";
 export * from "./payrollStateConsistencyGuard";
+export * from "./calendarOverlap";

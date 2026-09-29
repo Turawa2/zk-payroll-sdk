@@ -204,3 +204,9 @@ export * from "./compliance";
 
 // ── Privacy & Safe Credential Handling ─────────────────────────────────────
 export * from "./privacy";
+
+// ── Proof Artifact Lifecycle ────────────────────────────────────────────────
+export * from "./artifacts";
+
+// ── Payroll Calendar & Overlap Detection ────────────────────────────────────
+export * from "./payroll/calendarOverlap";
