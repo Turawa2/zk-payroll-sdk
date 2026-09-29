@@ -54,6 +54,14 @@ export const ERROR_CODE_REGISTRY: Record<string, ErrorCodeEntry> = {
     suggestedMessage:
       "SDK configuration validation failed. Please check your network, RPC URL, contract IDs, and feature flags.",
   },
+  PAYOUT_SCHEDULE_COLLISION: {
+    category: ErrorCategory.VALIDATION,
+    meaning:
+      "Payout schedule collision detected — overlapping payout executions, minimum interval violations, or duplicate schedule IDs.",
+    retryable: false,
+    suggestedMessage:
+      "One or more scheduled payouts collide. Review conflicting execution times and intervals.",
+  },
 
   // ── Wallet ──────────────────────────────────────────────────────────────
   WALLET_NOT_INSTALLED: {
