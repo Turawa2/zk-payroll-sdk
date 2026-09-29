@@ -227,6 +227,134 @@ typed `WithholdingConfigError` when a hard gate is needed, and
 `PayrollService.validateWithholdingConfig()` exposes the same check as an
 instance and static helper.
 
+## Payroll Recipient Lock Status Reader
+
+Expose whether a payout recipient is locked because of an active payroll execution (`#512`). This strengthens operational workflows by preventing duplicate payouts, race conditions, and double-settlement during in-flight batch execution while keeping private salary and employee data protected.
+
+- **Privacy Guaranteed**: Private compensation and salary figures are never part of lock evaluations or messages. Recipient addresses and internal payroll identifiers are automatically masked (`GA2C...6E67`, `pay...-01`) for safe logging and UI display.
+- **Contract & Offline Evaluation**: Query live on-chain lock status via `fetchRecipientLockStatus()` / `PayrollService#getRecipientLockStatus()`, or evaluate offline in-flight state via `evaluateRecipientLockStatus()` / `evaluateBatchRecipientLockStatus()`.
+- **UI & Dashboard Safe**: Formatted labels (`formatRecipientLockStatus()`) provide single-line status summaries with status badges (`🔒 LOCKED` / `🔓 UNLOCKED`).
+
+```typescript
+import {
+  fetchRecipientLockStatus,
+  evaluateRecipientLockStatus,
+  evaluateBatchRecipientLockStatus,
+  formatRecipientLockStatus,
+  isRecipientLocked,
+  PayrollService,
+} from "@zk-payroll/core";
+
+// 1. Query on-chain lock status from contract
+const status = await payrollService.getRecipientLockStatus(recipientAddress, employerAddress);
+
+if (status.isLocked) {
+  // Recipient is actively locked in an in-flight payroll run
+  console.log(formatRecipientLockStatus(status));
+  // e.g. "Recipient GA2C...6E67: 🔒 LOCKED (active_payroll_execution in run pay...-01 since 2026-09-29T12:00:00.000Z)"
+} else {
+  console.log("Safe to proceed with payout:", status.canReceivePayout);
+}
+
+// 2. Pure offline evaluation across active in-flight executions
+const activeExecutions = [
+  {
+    payrollId: "batch-run-2024-09",
+    status: "executing",
+    recipients: ["GA2C5RFPE6GCKMY3Z4DC6NOURMDRYZ3UMDVQ4N5ACFBPQ4E3Y3376E67"],
+    lockedAt: Date.now() - 10 * 60 * 1000,
+  },
+];
+
+const evalStatus = evaluateRecipientLockStatus(recipientAddress, activeExecutions, {
+  lockTimeoutMs: 60 * 60 * 1000, // 1 hour timeout
+});
+
+// 3. Batch evaluation for pre-flight payroll checks
+const batchSummary = evaluateBatchRecipientLockStatus(
+  ["GA2C...6E67", "GBBD...7WHF"],
+  activeExecutions
+);
+console.log(`Checked ${batchSummary.totalChecked} recipients: ${batchSummary.lockedCount} locked.`);
+```
+
+## Payroll Draft Lock Inspection Helper
+
+Inspect payroll draft lock readiness and operational lock state before submission or settlement (`#537`). Evaluates whether a draft can be safely locked, whether it is already locked or expired, whether any recipients are locked by in-flight active payroll executions, and whether draft checksums and authorizer requirements are met.
+
+- **Privacy Guaranteed**: Salary amounts and employee compensation figures are never exposed in blocker messages, warnings, or summaries. Recipient addresses and draft labels are automatically masked (`GA2C...6E67`, `Eng...oll`).
+- **Comprehensive Blocker Detection**: Validates empty drafts, duplicate recipients, expired locks, authorizer permissions, checksum integrity, and cross-checks in-flight active executions for recipient locks.
+- **Fluent & Service Integration**: Available via `inspectDraftLock()`, `assertDraftLockable()`, `draftBuilder.inspectLock()`, or `PayrollService#inspectDraftLock()`.
+
+```typescript
+import {
+  DraftBuilder,
+  inspectDraftLock,
+  assertDraftLockable,
+  formatDraftLockInspectionSummary,
+} from "@zk-payroll/core";
+
+// 1. Build and inspect a draft before locking
+const builder = new DraftBuilder(undefined, "March Payroll")
+  .add({ recipientId: "GA2C5RFPE6GCKMY3Z4DC6NOURMDRYZ3UMDVQ4N5ACFBPQ4E3Y3376E67", amount: "1000", asset: "native" })
+  .add({ recipientId: "GBBDU6DDT5I7VO6JCT262L7X3T32NZZ6XUMG575U5K7F5T27YJ3W7WHF", amount: "2500", asset: "native" });
+
+const inspection = builder.inspectLock({
+  activeExecutions: inFlightRuns,
+  authorizer: "GADMIN...",
+  allowedAuthorizers: ["GADMIN..."],
+});
+
+console.log(inspection.summary);
+// e.g. "Draft (Mar...oll): ✅ LOCK READY | 2 entries | 2 recipients | assets: native"
+
+if (!inspection.canLock) {
+  // Actionable, privacy-safe blockers
+  for (const blocker of inspection.blockers) {
+    console.error(`[${blocker.code}] ${blocker.message}`);
+  }
+} else {
+  // Safe to lock and submit
+  builder.assertLockable();
+}
+```
+
+## SDK Blocked Execution Diagnostics
+
+Pure, privacy-safe diagnostics engine for identifying, categorizing, and explaining why a payroll execution is blocked prior to on-chain submission (`#605`).
+
+- **Zero Information Leakage**: Never exposes individual compensation numbers, private keys, or unmasked recipient credentials. Only aggregate totals, masked identifiers (`GA2C...6E67`, `EMP***1`), and operational metadata are emitted.
+- **Comprehensive Blocker Detection**: Evaluates treasury reserves & buffers, ZK proof freshness and verification, contract pause states, batch capacity limits, approval governance, wallet rotation cooldowns, recipient eligibility, and session auth nonces.
+- **Actionable Remediation**: Every blocker and warning provides a structured remediation with action types (`fund_treasury`, `generate_proof`, `split_batch`, `reauthenticate`, `resolve_recipients`, etc.) and suggested resolution steps.
+- **Fluent & Service Integration**: Available via `diagnoseBlockedExecution()`, `assertCanExecute()`, `formatBlockedExecutionReport()`, or `PayrollService#diagnoseBlockedExecution()`.
+
+```typescript
+import {
+  diagnoseBlockedExecution,
+  assertCanExecute,
+  formatBlockedExecutionReport,
+} from "@zk-payroll/core";
+
+const report = diagnoseBlockedExecution({
+  runId: "run_001",
+  totalAmount: 50_000,
+  treasuryBalance: 20_000, // Shortfall: $30,000
+  hasProof: false,         // Missing ZK proof
+});
+
+console.log(formatBlockedExecutionReport(report));
+
+if (report.isBlocked) {
+  console.log(`Execution blocked by ${report.blockerCount} issue(s):`);
+  for (const blocker of report.blockers) {
+    console.log(`[${blocker.code}] ${blocker.message}`);
+    console.log(` -> Action: ${blocker.remediation.label} (${blocker.remediation.suggestedAction})`);
+  }
+} else {
+  assertCanExecute(report);
+}
+```
+
 ## Event Stream Deduplication
 
 The SDK provides deduplication helpers to prevent processing the same payroll event more than once. This strengthens payroll workflows while keeping private salary and employee data protected.
