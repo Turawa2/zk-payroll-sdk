@@ -18,6 +18,7 @@ All SDK errors inherit from the base `ZKPayrollError` class.
   - `ValidationError` - Client-side validation errors.
   - `PayoutScheduleCollisionError` - Payout schedule collisions, minimum interval violations, or duplicate schedule identifiers.
   - `PayrollStateConsistencyError` - Payroll state transitions that violate the expected lifecycle or contain inconsistent data.
+  - `PayrollCalendarOverlapError` - Payroll calendar cycles that overlap, contain collisions, or define inverted date ranges.
 
 *(Note: `PayrollError` is deprecated and acts as a backward-compatibility alias for `ZKPayrollError`)*
 
@@ -82,6 +83,7 @@ if (isRetryableErrorCode(error.code)) {
 | `PAYROLL_STATE_CONSISTENCY_VIOLATION` | payroll | Payroll state transition violates the expected lifecycle. | No | The payroll is in an invalid state for this operation. Refresh the payroll and try again. |
 | `PAYROLL_STATE_STALE_DATA` | payroll | Payroll state data is out of date or inconsistent. | Yes | The payroll data is out of date. Refresh the payroll and try again. |
 | `PAYROLL_STATE_INVALID_TRANSITION` | payroll | Requested payroll state transition is not allowed. | No | This payroll operation is not allowed in the current state. Please review the payroll status. |
+| `PAYROLL_CALENDAR_OVERLAP` | payroll | Payroll calendar cycles overlap or contain conflicting date intervals. | No | Payroll calendar cycles overlap or contain conflicting date intervals. Please review your period dates and try again. |
 
 ### Retry Guidance
 
@@ -252,3 +254,31 @@ draft --> pending_approval --> approved --> executing --> completed
 Each transition is validated by the SDK. Attempting an invalid transition (for example, executing a payroll that has not been approved) throws a `PayrollStateConsistencyError` with code `PAYROLL_STATE_INVALID_TRANSITION`.
 
 The consistency guard also detects stale or inconsistent local state by comparing the local payroll snapshot against the on-chain record. When a divergence is detected, a `PayrollStateConsistencyError` with code `PAYROLL_STATE_STALE_DATA` is thrown, signalling that the caller should refresh before retrying.
+
+### 6. Handling Payroll Calendar Overlap Errors (`PayrollCalendarOverlapError`)
+
+When scheduling payroll batches or periods, overlapping accounting cycles can cause double-disbursements or reconciliation conflicts. The SDK provides `assertNoPayrollCalendarOverlap` and `detectPayrollCalendarOverlaps`:
+
+```typescript
+import {
+  assertNoPayrollCalendarOverlap,
+  detectPayrollCalendarOverlaps,
+  PayrollCalendarOverlapError,
+} from "@zk-payroll/core";
+
+try {
+  assertNoPayrollCalendarOverlap([
+    { periodId: "2026-01", startDate: "2026-01-01", endDate: "2026-01-20" },
+    { periodId: "2026-02", startDate: "2026-01-15", endDate: "2026-02-15" },
+  ]);
+} catch (error) {
+  if (error instanceof PayrollCalendarOverlapError) {
+    console.error("Calendar overlap detected:", error.message);
+    for (const violation of error.violations) {
+      console.error(
+        `Conflict: ${violation.periodId} vs ${violation.conflictingPeriodId} (${violation.code}): ${violation.suggestedFix}`
+      );
+    }
+  }
+}
+```

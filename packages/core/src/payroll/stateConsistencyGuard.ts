@@ -7,7 +7,7 @@
  * stale clients, and race conditions from corrupting payroll execution.
  */
 
-import type { PayrollPeriodStatus } from "./types";
+import type { PayrollStatus as PayrollPeriodStatus } from "./types";
 
 export enum StateConsistencyErrorCode {
   /** The locally tracked status does not match the on-chain status. */
